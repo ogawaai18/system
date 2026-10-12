@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>授業観察支援システム</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: "Yu Gothic", sans-serif;
+      background: #dadde3;
+    }
+
+    header {
+      background: #002d63;
+      color: white;
+      text-align: center;
+      padding: 16px;
+      font-size: 22px;
+      font-weight: bold;
+    }
+
+    .section {
+      margin: 15px;
+    }
+
+    .section h2 {
+      color: #002d63;
+      margin-bottom: 8px;
+      font-size: 18px;
+    }
+
+    /* 観察開始ボタン */
+    #startButton {
+      display: block;
+      margin: 15px auto;
+      padding: 12px 24px;
+      font-size: 18px;
+      font-weight: bold;
+      background-color: #ff9800;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+    }
+
+    #startButton:hover {
+      background-color: #f57c00;
+    }
+
+    /* ==========================================
+       映像表示ラッパー（左右分割クロップ対応）
+       ========================================== */
+    .video-container {
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      overflow: hidden;
+      position: relative;
+      border-radius: 12px;
+      background: #000;
+    }
+
+    /* 通常モード（群B・群C：左右2分割がそのまま全体に映る） */
+    .video-container iframe {
+      width: 100%;
+      height: 100%;
+      border: none;
+      display: block;
+    }
+
+    /* 群A（熟練者のみ）：左半分を幅200%で拡大し、右半分（大学生）を枠外に隠す */
+    .video-container.expert-crop iframe {
+      width: 200%;
+      height: 100%;
+      position: absolute;
+      top: 0;
+      left: 0;
+    }
+
+    /* ==========================================
+       着目ポイント（コメントボックス）
+       ========================================== */
+    .comment {
+      margin-top: 15px;
+      background: white;
+      border: 3px solid #345983;
+      border-radius: 15px;
+      padding: 16px;
+      text-align: center;
+      box-shadow: 0 3px 8px rgba(0, 0, 0, 0.15);
+      transition: border-color 0.3s;
+    }
+
+    /* 助言者の属性ラベル */
+    #authorBadge {
+      display: none; /* 初期は非表示 */
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 14px;
+      font-weight: bold;
+      margin-bottom: 8px;
+    }
+
+    /* 助言本文 */
+    #advice {
+      font-size: 26px;
+      font-weight: bold;
+      color: #000000;
+      margin: 10px 0;
+      line-height: 1.4;
+    }
+
+    #time {
+      font-size: 16px;
+      color: #555555;
+    }
+
+    /* ==========================================
+       ハイライトアニメーション
+       ========================================== */
+    /* 熟練教員・助言者A用のハイライト（オレンジ系） */
+    @keyframes highlightExpert {
+      from {
+        background-color: #ffe0b2;
+        border-color: #fb8c00;
+      }
+      to {
+        background-color: white;
+        border-color: #345983;
+      }
+    }
+
+    .highlight-expert {
+      animation: highlightExpert 4s forwards;
+    }
+
+    /* 大学生・助言者B用のハイライト（青緑系） */
+    @keyframes highlightStudent {
+      from {
+        background-color: #c8e6c9;
+        border-color: #43a047;
+      }
+      to {
+        background-color: white;
+        border-color: #345983;
+      }
+    }
+
+    .highlight-student {
+      animation: highlightStudent 4s forwards;
+    }
+  </style>
+</head>
+
+<body>
+
+<header id="pageHeader">
+  授業観察支援システム
+</header>
+
+<button id="startButton">観察開始</button>
+
+<div class="section">
+  <h2 id="videoTitle">視点映像</h2>
+  <!-- 映像コンテナ -->
+  <div class="video-container" id="videoBox">
+    <!--埋め込みURL-->
+    <iframe id="videoIframe" src="" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
+  </div>
+  
+  <!-- チャット表示コンテナ -->
+  <div class="comment" id="commentBox">
+    <h2>着目ポイント</h2>
+    <div><span id="authorBadge"></span></div>
+    <p id="advice">...</p>
+    <p id="time"></p>
+  </div>
+</div>
+
+<script>
+// ==========================================
+// 1. 設定項目（ここを環境に合わせて入力）
+// ==========================================
+const API_KEY = "AIzaSyCnEKYem5NIE7YQQJTXCa8_z1EIq238Tms";
+const LIVE_ID = "9ZcBv1WrVN8"; // 配信動画ID
+
+// チャットを投稿する2名のYouTube表示名（正確に入力）
+const EXPERT_AUTHOR_NAME = "jogen1";
+const STUDENT_AUTHOR_NAME = "jogen2";
+
+// ==========================================
+// 2. モード判定（URLパラメータから取得）
+//   #a -> 群A（熟練者のみ・クロップ・熟練明示）
+//   #b -> 群B（両者表示・全画面・属性明示）
+//   "c" -> 群C（両者表示・全画面・属性秘匿 A/B）
+// ==========================================
+const urlParams = new URLSearchParams(window.location.search);
+const MODE = urlParams.get('mode') || 'expert_only';
+
+let speechEnabled = false;
+let timer = null;
+let liveChatId = "";
+let lastMessageId = "";
+
+// 画面初期レイアウトの設定
+function applyModeLayout() {
+  const videoBox = document.getElementById("videoBox");
+  const videoIframe = document.getElementById("videoIframe");
+  const videoTitle = document.getElementById("videoTitle");
+  const pageHeader = document.getElementById("pageHeader");
+
+  // YouTube埋め込みURLのセット
+  videoIframe.src = `https://www.youtube.com/embed/${LIVE_ID}?controls=0`;
+
+  if (MODE === 'expert_only') {
+    // 【群A】：左半分の熟練者映像のみにクロップ
+    videoBox.classList.add("expert-crop");
+    videoTitle.textContent = "熟練教員 視点映像";
+    pageHeader.textContent = "授業観察支援システム（熟練教員視点）";
+  } else {
+    // 【群B・群C】：クロップせず2画面並列のまま表示
+    videoBox.classList.remove("expert-crop");
+    videoTitle.textContent = "観察視点映像";
+    pageHeader.textContent = "授業観察支援システム";
+  }
+}
+
+// ==========================================
+// 3. YouTube API: LiveChatId自動取得
+// ==========================================
+async function fetchLiveChatId(videoId) {
+  const url = `https://www.googleapis.com/youtube/v3/videos?id=${videoId}&part=liveStreamingDetails&key=${API_KEY}`;
+  try {
+    const response = await fetch(url);
+    const data = await response.json();
+    if (data.items && data.items.length > 0 && data.items[0].liveStreamingDetails) {
+      return data.items[0].liveStreamingDetails.activeLiveChatId || null;
+    }
+  } catch (error) {
+    console.error("チャットID取得エラー:", error);
+  }
+  return null;
+}
+
+// ==========================================
+// 4. チャット取得・フィルタ・表示・読み上げ
+// ==========================================
+async function loadChat() {
+  if (!liveChatId) return;
+
+  // part に authorDetails を含めて投稿者情報を取得
+  const url = `https://www.googleapis.com/youtube/v3/liveChat/messages?liveChatId=${liveChatId}&part=snippet,authorDetails&key=${API_KEY}`;
+
+  try {
+    const response = await fetch(url);
+    const data = await response.json();
+    if (!data.items || data.items.length === 0) return;
+
+    const latest = data.items[data.items.length - 1];
+
+    // 新着メッセージの場合のみ処理
+    if (latest.id !== lastMessageId) {
+      lastMessageId = latest.id;
+
+      const authorName = latest.authorDetails.displayName;
+      const message = latest.snippet.displayMessage;
+      const publishedAt = latest.snippet.publishedAt;
+
+      // モードに応じたフィルタリングとラベル決定
+      processIncomingMessage(authorName, message, publishedAt);
+    }
+  } catch (error) {
+    console.error("チャット取得エラー:", error);
+  }
+}
+
+// メッセージの振り分けロジック
+function processIncomingMessage(author, message, publishedAt) {
+  let displayBadge = "";
+  let badgeColor = "#333";
+  let highlightClass = "";
+  let speechText = "";
+
+  // ----------------------------------------------------
+  // モード別の処理分岐
+  // ----------------------------------------------------
+  if (MODE === 'expert_only') {
+    // 【群A】：熟練教員以外は完全に無視（大学生コメントはスルー）
+    if (author !== EXPERT_AUTHOR_NAME) {
+      return; 
+    }
+    displayBadge = "熟練教員の助言";
+    badgeColor = "#e65100";
+    highlightClass = "highlight-expert";
+    speechText = `${message}`;
+  } 
+  else if (MODE === 'both_revealed') {
+    // 【群B】：両者表示・属性を明示
+    if (author === EXPERT_AUTHOR_NAME) {
+      displayBadge = "熟練教員";
+      badgeColor = "#e65100";
+      highlightClass = "highlight-expert";
+      speechText = `熟練教員より、${message}`;
+    } else if (author === STUDENT_AUTHOR_NAME) {
+      displayBadge = "学生指導員";
+      badgeColor = "#2e7d32";
+      highlightClass = "highlight-student";
+      speechText = `学生指導員より、${message}`;
+    } else {
+      return; // 指定した2名以外の視聴者チャットは除外
+    }
+  } 
+  else if (MODE === 'both_blind') {
+    // 【群C】：両者表示・属性は秘匿（助言者A/B）
+    if (author === EXPERT_AUTHOR_NAME) {
+      displayBadge = "助言者A";
+      badgeColor = "#1565c0";
+      highlightClass = "highlight-expert";
+      speechText = `助言者Aより、${message}`;
+    } else if (author === STUDENT_AUTHOR_NAME) {
+      displayBadge = "助言者B";
+      badgeColor = "#455a64";
+      highlightClass = "highlight-student";
+      speechText = `助言者Bより、${message}`;
+    } else {
+      return;
+    }
+  }
+
+  // ----------------------------------------------------
+  // 画面への反映
+  // ----------------------------------------------------
+  const badgeEl = document.getElementById("authorBadge");
+  badgeEl.textContent = displayBadge;
+  badgeEl.style.backgroundColor = badgeColor;
+  badgeEl.style.color = "#ffffff";
+  badgeEl.style.display = "inline-block";
+
+  document.getElementById("advice").textContent = message;
+
+  // 時刻表示 (HH:mm)
+  const date = new Date(publishedAt);
+  const time = date.getHours().toString().padStart(2, "0") + ":" +
+               date.getMinutes().toString().padStart(2, "0");
+  document.getElementById("time").textContent = time;
+
+  // アニメーション更新
+  const box = document.getElementById("commentBox");
+  box.classList.remove("highlight-expert", "highlight-student");
+  void box.offsetWidth; // リフロー発生
+  box.classList.add(highlightClass);
+
+  // 音声読み上げ
+  if (speechEnabled) {
+    const utterance = new SpeechSynthesisUtterance(speechText);
+    utterance.lang = "ja-JP";
+    utterance.rate = 1.0;
+    speechSynthesis.cancel();
+    speechSynthesis.speak(utterance);
+  }
+
+  // 10秒後に初期状態へ戻す
+  clearTimeout(timer);
+  timer = setTimeout(() => {
+    document.getElementById("advice").textContent = "...";
+    document.getElementById("time").textContent = "";
+    badgeEl.style.display = "none";
+  }, 10000);
+}
+
+// ==========================================
+// 5. イベントリスナーと初期化
+// ==========================================
+document.getElementById("startButton").addEventListener("click", () => {
+  speechEnabled = true;
+  const test = new SpeechSynthesisUtterance("観察を開始します");
+  test.lang = "ja-JP";
+  speechSynthesis.speak(test);
+  document.getElementById("startButton").style.display = "none";
+});
+
+async function init() {
+  applyModeLayout();
+
+  liveChatId = await fetchLiveChatId(LIVE_ID);
+  if (liveChatId) {
+    console.log("チャット接続成功:", liveChatId);
+    document.getElementById("advice").textContent = "準備完了（助言待機中）";
+    loadChat();
+    setInterval(loadChat, 3000);
+  } else {
+    document.getElementById("advice").textContent = "配信のチャットに接続できません（配信中か確認してください）";
+  }
+}
+
+init();
+</script>
+</body>
+</html>
