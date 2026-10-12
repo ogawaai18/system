@@ -70,12 +70,20 @@
     }
 
     /* 群A（熟練者のみ）：左半分を幅200%で拡大し、右半分（大学生）を枠外に隠す */
+
+    /* 1. 外枠を左半分の比率（8:9）に合わせて縦に広げる */
+    .video-container.expert-crop {
+      aspect-ratio: 8 / 9; /* 正方形に近い縦長になり、歪みを防止 */
+    }
+
+    /* 2. 縦横比を崩さず、左半分だけを枠いっぱいにフィットさせる */
     .video-container.expert-crop iframe {
       width: 200%;
       height: 100%;
       position: absolute;
       top: 0;
       left: 0;
+      border: none;
     }
 
     /* ==========================================
@@ -182,7 +190,7 @@
 // 1. 設定項目
 // ==========================================
 const API_KEY = "AIzaSyCnEKYem5NIE7YQQJTXCa8_z1EIq238Tms";
-const LIVE_ID = "4sXKuOKBzGw"; // 配信動画ID
+const LIVE_ID = "RGlgKdG_LaM"; // 配信動画ID
 
 // チャットを投稿する2名のYouTube表示名（正確に入力）
 const EXPERT_AUTHOR_NAME = "@jogen1-w6r";
