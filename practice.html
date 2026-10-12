@@ -94,7 +94,7 @@
 
     /* 助言者の属性ラベル */
     #authorBadge {
-      display: none; /* 初期は非表示 */
+      display: none;
       padding: 4px 12px;
       border-radius: 20px;
       font-size: 14px;
@@ -159,13 +159,12 @@
   授業観察支援システム
 </header>
 
-<button id="startButton">観察開始</button>
+<button id="startButton">観察開始（音声有効化）</button>
 
 <div class="section">
   <h2 id="videoTitle">視点映像</h2>
   <!-- 映像コンテナ -->
   <div class="video-container" id="videoBox">
-    <!--埋め込みURL-->
     <iframe id="videoIframe" src="" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
   </div>
   
@@ -173,14 +172,14 @@
   <div class="comment" id="commentBox">
     <h2>着目ポイント</h2>
     <div><span id="authorBadge"></span></div>
-    <p id="advice">...</p>
+    <p id="advice">配信接続中...</p>
     <p id="time"></p>
   </div>
 </div>
 
 <script>
 // ==========================================
-// 1. 設定項目（ここを環境に合わせて入力）
+// 1. 設定項目
 // ==========================================
 const API_KEY = "AIzaSyCnEKYem5NIE7YQQJTXCa8_z1EIq238Tms";
 const LIVE_ID = "9ZcBv1WrVN8"; // 配信動画ID
@@ -190,39 +189,47 @@ const EXPERT_AUTHOR_NAME = "jogen1";
 const STUDENT_AUTHOR_NAME = "jogen2";
 
 // ==========================================
-// 2. モード判定（URLパラメータから取得）
-//   #a -> 群A（熟練者のみ・クロップ・熟練明示）
-//   #b -> 群B（両者表示・全画面・属性明示）
-//   "c" -> 群C（両者表示・全画面・属性秘匿 A/B）
+// 2. モード判定（URLのハッシュ #a, #b, #c から取得）
 // ==========================================
-const urlParams = new URLSearchParams(window.location.search);
-const MODE = urlParams.get('mode') || 'expert_only';
+const hash = window.location.hash.toLowerCase().replace('#', '');
+let MODE = 'expert_only'; // デフォルトは群A
+
+if (hash === 'b') {
+  MODE = 'both_revealed'; // 群B（両方表示・属性開示）
+} else if (hash === 'c') {
+  MODE = 'both_blind';    // 群C（両方表示・属性非開示）
+}
 
 let speechEnabled = false;
 let timer = null;
 let liveChatId = "";
 let lastMessageId = "";
 
-// 画面初期レイアウトの設定
+// 画面レイアウトの適用
 function applyModeLayout() {
   const videoBox = document.getElementById("videoBox");
   const videoIframe = document.getElementById("videoIframe");
   const videoTitle = document.getElementById("videoTitle");
   const pageHeader = document.getElementById("pageHeader");
 
-  // YouTube埋め込みURLのセット
+  // YouTube埋め込みURLの自動セット
   videoIframe.src = `https://www.youtube.com/embed/${LIVE_ID}?controls=0`;
 
   if (MODE === 'expert_only') {
-    // 【群A】：左半分の熟練者映像のみにクロップ
+    // 【群A】：左半分（熟練教員視点）のみをクロップ拡大
     videoBox.classList.add("expert-crop");
     videoTitle.textContent = "熟練教員 視点映像";
-    pageHeader.textContent = "授業観察支援システム（熟練教員視点）";
-  } else {
-    // 【群B・群C】：クロップせず2画面並列のまま表示
+    pageHeader.textContent = "授業観察支援システム（グループA）";
+  } else if (MODE === 'both_revealed') {
+    // 【群B】：左右2画面・属性開示
     videoBox.classList.remove("expert-crop");
     videoTitle.textContent = "観察視点映像";
-    pageHeader.textContent = "授業観察支援システム";
+    pageHeader.textContent = "授業観察支援システム（グループB）";
+  } else if (MODE === 'both_blind') {
+    // 【群C】：左右2画面・属性非開示
+    videoBox.classList.remove("expert-crop");
+    videoTitle.textContent = "観察視点映像";
+    pageHeader.textContent = "授業観察支援システム（グループC）";
   }
 }
 
@@ -249,7 +256,6 @@ async function fetchLiveChatId(videoId) {
 async function loadChat() {
   if (!liveChatId) return;
 
-  // part に authorDetails を含めて投稿者情報を取得
   const url = `https://www.googleapis.com/youtube/v3/liveChat/messages?liveChatId=${liveChatId}&part=snippet,authorDetails&key=${API_KEY}`;
 
   try {
@@ -259,7 +265,6 @@ async function loadChat() {
 
     const latest = data.items[data.items.length - 1];
 
-    // 新着メッセージの場合のみ処理
     if (latest.id !== lastMessageId) {
       lastMessageId = latest.id;
 
@@ -267,7 +272,6 @@ async function loadChat() {
       const message = latest.snippet.displayMessage;
       const publishedAt = latest.snippet.publishedAt;
 
-      // モードに応じたフィルタリングとラベル決定
       processIncomingMessage(authorName, message, publishedAt);
     }
   } catch (error) {
@@ -275,28 +279,23 @@ async function loadChat() {
   }
 }
 
-// メッセージの振り分けロジック
 function processIncomingMessage(author, message, publishedAt) {
   let displayBadge = "";
   let badgeColor = "#333";
   let highlightClass = "";
   let speechText = "";
 
-  // ----------------------------------------------------
-  // モード別の処理分岐
-  // ----------------------------------------------------
+  // モード別条件分岐
   if (MODE === 'expert_only') {
-    // 【群A】：熟練教員以外は完全に無視（大学生コメントはスルー）
-    if (author !== EXPERT_AUTHOR_NAME) {
-      return; 
-    }
+    // 【群A】：熟練教員以外は無視（大学生の助言は弾く）
+    if (author !== EXPERT_AUTHOR_NAME) return;
     displayBadge = "熟練教員の助言";
     badgeColor = "#e65100";
     highlightClass = "highlight-expert";
     speechText = `${message}`;
   } 
   else if (MODE === 'both_revealed') {
-    // 【群B】：両者表示・属性を明示
+    // 【群B】：両者表示・属性開示
     if (author === EXPERT_AUTHOR_NAME) {
       displayBadge = "熟練教員";
       badgeColor = "#e65100";
@@ -308,11 +307,11 @@ function processIncomingMessage(author, message, publishedAt) {
       highlightClass = "highlight-student";
       speechText = `学生指導員より、${message}`;
     } else {
-      return; // 指定した2名以外の視聴者チャットは除外
+      return;
     }
   } 
   else if (MODE === 'both_blind') {
-    // 【群C】：両者表示・属性は秘匿（助言者A/B）
+    // 【群C】：両者表示・属性非開示（A/B表示）
     if (author === EXPERT_AUTHOR_NAME) {
       displayBadge = "助言者A";
       badgeColor = "#1565c0";
@@ -328,9 +327,7 @@ function processIncomingMessage(author, message, publishedAt) {
     }
   }
 
-  // ----------------------------------------------------
-  // 画面への反映
-  // ----------------------------------------------------
+  // 画面へ反映
   const badgeEl = document.getElementById("authorBadge");
   badgeEl.textContent = displayBadge;
   badgeEl.style.backgroundColor = badgeColor;
@@ -339,19 +336,16 @@ function processIncomingMessage(author, message, publishedAt) {
 
   document.getElementById("advice").textContent = message;
 
-  // 時刻表示 (HH:mm)
   const date = new Date(publishedAt);
   const time = date.getHours().toString().padStart(2, "0") + ":" +
                date.getMinutes().toString().padStart(2, "0");
   document.getElementById("time").textContent = time;
 
-  // アニメーション更新
   const box = document.getElementById("commentBox");
   box.classList.remove("highlight-expert", "highlight-student");
-  void box.offsetWidth; // リフロー発生
+  void box.offsetWidth;
   box.classList.add(highlightClass);
 
-  // 音声読み上げ
   if (speechEnabled) {
     const utterance = new SpeechSynthesisUtterance(speechText);
     utterance.lang = "ja-JP";
@@ -360,7 +354,6 @@ function processIncomingMessage(author, message, publishedAt) {
     speechSynthesis.speak(utterance);
   }
 
-  // 10秒後に初期状態へ戻す
   clearTimeout(timer);
   timer = setTimeout(() => {
     document.getElementById("advice").textContent = "...";
